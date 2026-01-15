@@ -189,7 +189,19 @@ def load_existing_sheet_quotes(worksheet) -> Tuple[Set[str], int]:
                 last_sno = max(last_sno, int(sno_value))
     except Exception:
         return existing, last_sno
-    return existing, last_sno
+
+def ensure_sheet_header_format(worksheet) -> None:
+    try:
+        worksheet.freeze(rows=1)
+        worksheet.format(
+            "1:1",
+            {
+                "horizontalAlignment": "CENTER",
+                "textFormat": {"bold": True},
+            },
+        )
+    except Exception:
+        return
 
 def extract_likes(quote_div) -> int:
     """Extract likes count from quote div."""
@@ -344,7 +356,7 @@ def resolve_page_limit() -> int:
     if env_pages.isdigit():
         return int(env_pages)
     if not sys.stdin.isatty():
-        return 1
+        return 0
     return ask_page_limit()
 
 def signal_handler(signum, frame):
@@ -423,6 +435,7 @@ def main():
                 worksheet = spreadsheet.add_worksheet(title=sheet_title, rows=1000, cols=len(CSV_HEADER))
             if worksheet.get_all_values() == []:
                 worksheet.append_row(CSV_HEADER)
+                ensure_sheet_header_format(worksheet)
             sheet_existing, sheet_last_sno = load_existing_sheet_quotes(worksheet)
             sheet_states[sheet_title] = {"existing": sheet_existing, "sno": sheet_last_sno, "sheet": worksheet}
             global_existing.update(sheet_existing)

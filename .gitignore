@@ -1,5 +1,6 @@
 Export/
 chromedriver.exe
 credentials.json
+.vscode/
 __pycache__/
 *.pyc

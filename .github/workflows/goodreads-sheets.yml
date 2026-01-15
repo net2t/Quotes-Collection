@@ -24,6 +24,6 @@ jobs:
         env:
           GOODREADS_SHEET_URL: ${{ secrets.GOODREADS_SHEET_URL }}
           GOODREADS_SERVICE_ACCOUNT_JSON: ${{ secrets.GOODREADS_SERVICE_ACCOUNT_JSON }}
-          TAG_SELECTION: ${{ secrets.TAG_SELECTION }}
-          PAGE_LIMIT: ${{ secrets.PAGE_LIMIT }}
+          TAG_SELECTION: ${{ secrets.TAG_SELECTION || 'all' }}
+          PAGE_LIMIT: ${{ secrets.PAGE_LIMIT || '0' }}
         run: python goodreads.py
