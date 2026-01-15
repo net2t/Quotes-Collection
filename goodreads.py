@@ -175,11 +175,23 @@ def load_sheet_client() -> gspread.Client | None:
     )
     return gspread.authorize(credentials)
 
+def gsheet_with_retry(action, max_attempts: int = 5, base_delay: float = 1.0):
+    for attempt in range(max_attempts):
+        try:
+            return action()
+        except Exception as exc:
+            if "429" in str(exc) or "rateLimitExceeded" in str(exc):
+                delay = min(base_delay * (2 ** attempt), 32)
+                time.sleep(delay + random.uniform(0, 0.5))
+                continue
+            raise
+    raise RuntimeError("Google Sheets API rate limit exceeded. Try later.")
+
 def load_existing_sheet_quotes(worksheet) -> Tuple[Set[str], int]:
     existing: Set[str] = set()
     last_sno = 0
     try:
-        rows = worksheet.get_all_records()
+        rows = gsheet_with_retry(worksheet.get_all_records)
         for row in rows:
             quote_value = row.get("QUOTE")
             if quote_value:
@@ -193,14 +205,25 @@ def load_existing_sheet_quotes(worksheet) -> Tuple[Set[str], int]:
 
 def ensure_sheet_header_format(worksheet) -> None:
     try:
-        worksheet.freeze(rows=1)
-        worksheet.format(
-            "1:1",
-            {
-                "horizontalAlignment": "CENTER",
-                "textFormat": {"bold": True},
-            },
+        gsheet_with_retry(lambda: worksheet.freeze(rows=1))
+        gsheet_with_retry(
+            lambda: worksheet.format(
+                "1:1",
+                {
+                    "horizontalAlignment": "CENTER",
+                    "textFormat": {"bold": True},
+                },
+            )
         )
+    except Exception:
+        return
+
+def ensure_sheet_header(worksheet) -> None:
+    try:
+        header_row = gsheet_with_retry(lambda: worksheet.row_values(1))
+        if header_row != CSV_HEADER:
+            gsheet_with_retry(lambda: worksheet.update("1:1", [CSV_HEADER]))
+        ensure_sheet_header_format(worksheet)
     except Exception:
         return
 
@@ -431,12 +454,12 @@ def main():
         if sheet_enabled and spreadsheet is not None:
             sheet_title = category_to_filename(tag_name)
             try:
-                worksheet = spreadsheet.worksheet(sheet_title)
+                worksheet = gsheet_with_retry(lambda: spreadsheet.worksheet(sheet_title))
             except Exception:
-                worksheet = spreadsheet.add_worksheet(title=sheet_title, rows=1000, cols=len(CSV_HEADER))
-            if worksheet.get_all_values() == []:
-                worksheet.append_row(CSV_HEADER)
-                ensure_sheet_header_format(worksheet)
+                worksheet = gsheet_with_retry(
+                    lambda: spreadsheet.add_worksheet(title=sheet_title, rows=1000, cols=len(CSV_HEADER))
+                )
+            ensure_sheet_header(worksheet)
             sheet_existing, sheet_last_sno = load_existing_sheet_quotes(worksheet)
             sheet_states[sheet_title] = {"existing": sheet_existing, "sno": sheet_last_sno, "sheet": worksheet}
             global_existing.update(sheet_existing)
