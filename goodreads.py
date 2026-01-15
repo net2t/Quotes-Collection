@@ -11,6 +11,9 @@ import sys
 import signal
 import csv
 import re
+import os
+import json
+import base64
 from pathlib import Path
 from bs4 import BeautifulSoup
 from typing import List, Tuple, Set, Dict
@@ -26,6 +29,8 @@ from rich.progress import (
 )
 from rich.prompt import Prompt
 from rich.table import Table
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Configuration
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -143,6 +148,48 @@ def category_to_filename(name: str) -> str:
 
 def quote_key(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
+
+def env_value(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+def parse_service_account_json(raw_value: str) -> dict:
+    if not raw_value:
+        return {}
+    raw_value = raw_value.strip()
+    try:
+        if raw_value.startswith("{"):
+            return json.loads(raw_value)
+        decoded = base64.b64decode(raw_value).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        return {}
+
+def load_sheet_client() -> gspread.Client | None:
+    sheet_json = env_value("GOODREADS_SERVICE_ACCOUNT_JSON")
+    sheet_info = parse_service_account_json(sheet_json)
+    if not sheet_info:
+        return None
+    credentials = Credentials.from_service_account_info(
+        sheet_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    return gspread.authorize(credentials)
+
+def load_existing_sheet_quotes(worksheet) -> Tuple[Set[str], int]:
+    existing: Set[str] = set()
+    last_sno = 0
+    try:
+        rows = worksheet.get_all_records()
+        for row in rows:
+            quote_value = row.get("QUOTE")
+            if quote_value:
+                existing.add(quote_key(str(quote_value)))
+            sno_value = str(row.get("SNO", "")).strip()
+            if sno_value.isdigit():
+                last_sno = max(last_sno, int(sno_value))
+    except Exception:
+        return existing, last_sno
+    return existing, last_sno
 
 def extract_likes(quote_div) -> int:
     """Extract likes count from quote div."""
@@ -280,6 +327,22 @@ def ask_page_limit() -> int:
                 return pages
         console.print("[red]Please enter a non-negative whole number.[/]")
 
+def resolve_tag_selection() -> List[int]:
+    env_choice = env_value("TAG_SELECTION")
+    if env_choice:
+        if env_choice.lower() == "all":
+            return [item[0] for item in RAW_TAG_TABLE]
+        parsed = parse_tag_selection(env_choice, len(RAW_TAG_TABLE))
+        if parsed:
+            return parsed
+    return show_tag_menu()
+
+def resolve_page_limit() -> int:
+    env_pages = env_value("PAGE_LIMIT")
+    if env_pages.isdigit():
+        return int(env_pages)
+    return ask_page_limit()
+
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully."""
     print("\n\n⚠️  Script interrupted by user!")
@@ -317,11 +380,11 @@ def main():
     console.print(Panel.fit("[bold cyan]Goodreads Quotes Exporter[/]", border_style="cyan"))
     
     # --- User Input ---
-    chosen_numbers = show_tag_menu()
+    chosen_numbers = resolve_tag_selection()
     if not chosen_numbers:
         print("❌ No tags selected. Exiting.")
         return
-    page_limit = ask_page_limit()
+    page_limit = resolve_page_limit()
 
     # --- File Setup ---
     out_dir = Path("Export")
@@ -331,12 +394,34 @@ def main():
     tags_to_scrape = [tag for tag in RAW_TAG_TABLE if tag[0] in chosen_numbers]
     file_states: Dict[Path, Dict[str, object]] = {}
     global_existing: Set[str] = set()
+    sheet_states: Dict[str, Dict[str, object]] = {}
+    sheet_client = load_sheet_client()
+    sheet_url = env_value("GOODREADS_SHEET_URL")
+    sheet_enabled = sheet_client is not None and bool(sheet_url)
+    spreadsheet = None
+    if sheet_enabled:
+        try:
+            spreadsheet = sheet_client.open_by_url(sheet_url)
+        except Exception as exc:
+            console.print(f"[yellow]Google Sheet disabled:[/] {exc}")
+            sheet_enabled = False
     for _, tag_name, _ in tags_to_scrape:
         file_name = f"{category_to_filename(tag_name)}.csv"
         csv_path = out_dir / file_name
         existing_quotes, last_sno = load_existing_quotes(csv_path)
         file_states[csv_path] = {"existing": existing_quotes, "sno": last_sno}
         global_existing.update(existing_quotes)
+        if sheet_enabled and spreadsheet is not None:
+            sheet_title = category_to_filename(tag_name)
+            try:
+                worksheet = spreadsheet.worksheet(sheet_title)
+            except Exception:
+                worksheet = spreadsheet.add_worksheet(title=sheet_title, rows=1000, cols=len(CSV_HEADER))
+            if worksheet.get_all_values() == []:
+                worksheet.append_row(CSV_HEADER)
+            sheet_existing, sheet_last_sno = load_existing_sheet_quotes(worksheet)
+            sheet_states[sheet_title] = {"existing": sheet_existing, "sno": sheet_last_sno, "sheet": worksheet}
+            global_existing.update(sheet_existing)
     console.print(f"Loaded [bold]{len(global_existing)}[/] existing quotes across {len(file_states)} files.")
 
     # --- Scraping ---
@@ -365,12 +450,16 @@ def main():
                 state = file_states[csv_path]
                 existing_quotes = state["existing"]
                 last_sno = state["sno"]
+                sheet_state = None
+                if sheet_enabled:
+                    sheet_state = sheet_states.get(category_to_filename(tag_name))
 
                 cur_url = tag_url
                 pages_done = 0
                 quotes_in_cat = 0
                 page_total = page_limit if page_limit > 0 else None
                 page_task = progress.add_task(f"[cyan]{display_name}[/]", total=page_total)
+                new_sheet_rows: List[List[object]] = []
 
                 with open(csv_path, 'a', newline='', encoding='utf-8') as f:
                     writer = csv.writer(f)
@@ -408,6 +497,8 @@ def main():
                                 writer.writerow(row_data)
                                 existing_quotes.add(normalized_quote)
                                 global_existing.add(normalized_quote)
+                                if sheet_state is not None:
+                                    new_sheet_rows.append(row_data)
                                 new_on_page += 1
 
                         if new_on_page > 0:
@@ -421,6 +512,10 @@ def main():
                         cur_url = f"https://www.goodreads.com{nxt}" if nxt else None
 
                 state["sno"] = last_sno
+                if sheet_state is not None and new_sheet_rows:
+                    sheet_state["sno"] = last_sno
+                    worksheet = sheet_state["sheet"]
+                    worksheet.append_rows(new_sheet_rows, value_input_option="USER_ENTERED")
                 progress.remove_task(page_task)
                 progress.update(overall_task, advance=1)
                 console.print(f"   Finished [bold]{display_name}[/], found {quotes_in_cat} new quotes.")

@@ -90,7 +90,18 @@ Each category exports to its own CSV with the same header:
 
 - Random delays are used between requests to be polite
 - Outputs append to existing CSVs if they already exist
-- No Google Sheets export (local CSV only)
+- Google Sheets export is supported when secrets are provided (see below)
+
+## Google Sheets Export (GitHub Actions)
+
+Set these repository secrets:
+
+- `GOODREADS_SHEET_URL` — full Google Sheet URL
+- `GOODREADS_SERVICE_ACCOUNT_JSON` — service account JSON (raw or base64)
+- `TAG_SELECTION` — optional (e.g., `all`, `1,3,5`, `2-7`)
+- `PAGE_LIMIT` — optional pages per category (e.g., `2`)
+
+The workflow runs daily at **1:00 AM PKT (UTC+5)**.
 
 ## Author
 
