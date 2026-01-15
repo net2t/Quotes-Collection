@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 20 * * *" # 1:00 AM PKT (UTC+5)
   workflow_dispatch:
+    inputs:
+      tag_selection:
+        description: "Tags to scrape (e.g., all, 1,3,5, 2-7)"
+        required: false
+        default: "all"
+      page_limit:
+        description: "Pages per category (0 = all)"
+        required: false
+        default: "0"
 
 jobs:
   scrape:
@@ -24,6 +33,6 @@ jobs:
         env:
           GOODREADS_SHEET_URL: ${{ secrets.GOODREADS_SHEET_URL }}
           GOODREADS_SERVICE_ACCOUNT_JSON: ${{ secrets.GOODREADS_SERVICE_ACCOUNT_JSON }}
-          TAG_SELECTION: ${{ secrets.TAG_SELECTION || 'all' }}
-          PAGE_LIMIT: ${{ secrets.PAGE_LIMIT || '0' }}
+          TAG_SELECTION: ${{ inputs.tag_selection || secrets.TAG_SELECTION || 'all' }}
+          PAGE_LIMIT: ${{ inputs.page_limit || secrets.PAGE_LIMIT || '0' }}
         run: python goodreads.py
