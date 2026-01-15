@@ -1,4 +1,5 @@
 Export/
 chromedriver.exe
+credentials.json
 __pycache__/
 *.pyc

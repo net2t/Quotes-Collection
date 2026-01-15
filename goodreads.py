@@ -335,12 +335,16 @@ def resolve_tag_selection() -> List[int]:
         parsed = parse_tag_selection(env_choice, len(RAW_TAG_TABLE))
         if parsed:
             return parsed
+    if not sys.stdin.isatty():
+        return [item[0] for item in RAW_TAG_TABLE]
     return show_tag_menu()
 
 def resolve_page_limit() -> int:
     env_pages = env_value("PAGE_LIMIT")
     if env_pages.isdigit():
         return int(env_pages)
+    if not sys.stdin.isatty():
+        return 1
     return ask_page_limit()
 
 def signal_handler(signum, frame):
