@@ -189,6 +189,7 @@ def load_existing_sheet_quotes(worksheet) -> Tuple[Set[str], int]:
                 last_sno = max(last_sno, int(sno_value))
     except Exception:
         return existing, last_sno
+    return existing, last_sno
 
 def ensure_sheet_header_format(worksheet) -> None:
     try:
