@@ -1,0 +1,11 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+tqdm>=4.66.0
+rich>=13.7.0
+openpyxl>=3.1.0
+# The following are only required when --export 1 is used (GitHub Actions)
+gspread>=6.0.0
+google-auth>=2.25.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.2.0
